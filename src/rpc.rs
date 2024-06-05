@@ -1,61 +1,92 @@
 use crate::constants::{self};
+use crate::scanner::SplitFnResult;
 use serde_json;
 
-pub fn encode_message<T>(msg: &T) -> String
+pub fn encode_message<T>(msg: &T) -> Result<Vec<u8>, String>
 where
     T: serde::ser::Serialize,
 {
-    let json = serde_json::to_string(&msg).expect("Could not serialize message");
-    return format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
+    let cloned_msg = msg;
+    match serde_json::to_string(&cloned_msg) {
+        Ok(json) => {
+            let json_bytes = json.as_bytes();
+            let bytes = [
+                constants::CONTENT_LENGTH_LABEL_BYTES,
+                &json_bytes.len().to_be_bytes(),
+                constants::JSON_RPC_DELIMITER_BYTES,
+                json_bytes,
+            ]
+            .concat();
+            return Ok(bytes);
+        }
+        Err(e) => Err(e.to_string()),
+    }
+    // return format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
 }
 
-pub fn decode_message<'a, T: serde::de::Deserialize<'a>>(msg: &'a [u8]) -> T {
-    let content_start_index = msg
+pub fn decode_message<'a, T: serde::de::Deserialize<'a>>(msg: &'a [u8]) -> Result<T, String> {
+    let content_bytes = match msg
         .windows(4)
         .enumerate()
-        .find(|(_, w)| matches!(*w, b"\r\n\r\n"))
+        .find(|(_, w)| matches!(*w, constants::JSON_RPC_DELIMITER_BYTES))
         .map(|(i, _)| i)
-        .expect("Could not find the \\r\\n\\r\\n separator.");
-    let content_bytes = &msg[(content_start_index + 4)..];
-    let stringified_msg = std::str::from_utf8(&content_bytes)
-        .expect("Could not convert content bytes to str literal.");
-    println!("{}", stringified_msg);
-
-    let deserialized =
-        serde_json::from_str(stringified_msg).expect("Could not deserialize message");
-    return deserialized;
+    {
+        Some(delimiter_index) => {
+            &msg[delimiter_index + constants::JSON_RPC_DELIMITER_BYTES.len()..]
+        }
+        None => return Err("Could not find delimiter when decoding message".to_string()),
+    };
+    match serde_json::from_slice(content_bytes) {
+        Ok(deserialized) => Ok(deserialized),
+        Err(err) => Err(err.to_string()),
+    }
 }
 
-pub fn split_fn(data: &[u8]) -> Result<(usize, &[u8], bool), String> {
-    if !data.starts_with(constants::CONTENT_LENGTH_LABEL.as_bytes()) {
-        return Err(format!(
-            "Line did not start with {}",
-            constants::CONTENT_LENGTH_LABEL
-        ));
+pub fn split_fn(data: &[u8], start_hint: usize) -> Result<SplitFnResult, String> {
+    let start_index = match data[start_hint..]
+        .windows(constants::CONTENT_LENGTH_LABEL_BYTES.len())
+        .enumerate()
+        .find(|(_, w)| matches!(*w, constants::CONTENT_LENGTH_LABEL_BYTES))
+        .map(|(i, _)| i + start_hint)
+    {
+        Some(value) => value,
+        None => return Ok(SplitFnResult::Searching),
+    };
+
+    let delimiter_index = match data[start_index..]
+        .windows(constants::JSON_RPC_DELIMITER_BYTES.len())
+        .enumerate()
+        .find(|(_, w)| matches!(*w, constants::JSON_RPC_DELIMITER_BYTES))
+        .map(|(i, _)| i)
+    {
+        Some(value) => value,
+        None => return Ok(SplitFnResult::SearchingEnd { start: start_index }),
+    };
+
+    assert!(start_index + constants::CONTENT_LENGTH_LABEL_BYTES.len() < delimiter_index);
+
+    let content_length_res = match std::str::from_utf8(
+        &data[start_hint + constants::CONTENT_LENGTH_LABEL_BYTES.len()..delimiter_index],
+    ) {
+        Ok(content_length_str) => content_length_str.parse::<usize>(),
+        Err(_) => return Err("Could not convert content length bytes to str".to_string()),
+    };
+
+    let content_length = match content_length_res {
+        Ok(content_length) => content_length,
+        Err(_) => return Err("Could not parse content length".to_string()),
+    };
+
+    let content_start_index = delimiter_index + constants::JSON_RPC_DELIMITER_BYTES.len();
+
+    if data[content_start_index..].len() < content_length {
+        return Ok(SplitFnResult::SearchingEnd { start: start_index });
     }
 
-    return match cut_data(data) {
-        Ok((header, content)) => {
-            let content_length = std::str::from_utf8(
-                header
-                    .strip_prefix(constants::CONTENT_LENGTH_LABEL.as_bytes())
-                    .unwrap(),
-            )
-            .unwrap()
-            .parse::<usize>()
-            .unwrap();
-
-            if content.len() < content_length {
-                return Ok((0, &[], false));
-            }
-
-            let total_length =
-                constants::CONTENT_LENGTH_LABEL.as_bytes().len() + 4 + content_length;
-
-            return Ok((total_length, &data[..total_length], true));
-        }
-        Err(message) => Err(message),
-    };
+    return Ok(SplitFnResult::Complete {
+        start: start_index,
+        end: content_start_index + content_length,
+    });
 }
 
 pub fn cut_data(data: &[u8]) -> Result<(&[u8], &[u8]), String> {
@@ -67,7 +98,10 @@ pub fn cut_data(data: &[u8]) -> Result<(&[u8], &[u8]), String> {
 
     return match delimiter_index_option {
         Some(delimiter_index) => Ok((&data[..delimiter_index], &data[delimiter_index + 4..])),
-        None => Err("Could not cut data".to_string()),
+        None => Err(format!(
+            "Could not cut data. Got: {}",
+            std::str::from_utf8(data).unwrap()
+        )),
     };
 }
 
