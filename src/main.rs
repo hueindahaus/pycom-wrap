@@ -46,6 +46,7 @@ fn main() {
         if response_opt.is_some() {
             match rpc::encode_message(&response_opt.unwrap()) {
                 Ok(encoded_message) => {
+                    info!("{}", std::str::from_utf8(&encoded_message).unwrap());
                     writer.write(&encoded_message);
                     ()
                 }

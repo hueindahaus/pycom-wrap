@@ -6,18 +6,15 @@ pub fn encode_message<T>(msg: &T) -> Result<Vec<u8>, String>
 where
     T: serde::ser::Serialize,
 {
-    let cloned_msg = msg;
-    match serde_json::to_string(&cloned_msg) {
+    match serde_json::to_string(&msg) {
         Ok(json) => {
-            let json_bytes = json.as_bytes();
-            let bytes = [
-                constants::CONTENT_LENGTH_LABEL_BYTES,
-                &json_bytes.len().to_be_bytes(),
-                constants::JSON_RPC_DELIMITER_BYTES,
-                json_bytes,
-            ]
-            .concat();
-            return Ok(bytes);
+            let content_bytes = json.as_bytes();
+
+            let mut vec: Vec<u8> = constants::CONTENT_LENGTH_LABEL_BYTES.to_vec();
+            vec.extend(content_bytes.len().to_string().as_bytes());
+            vec.extend(constants::JSON_RPC_DELIMITER_BYTES);
+            vec.extend(content_bytes);
+            return Ok(vec);
         }
         Err(e) => Err(e.to_string()),
     }
