@@ -38,9 +38,8 @@ impl<R: Read> Iterator for Scanner<'_, R> {
             let tmp_buffer_len = tmp_buffer.len();
 
             if tmp_buffer_len > 0 {
-                info!("Read {}", std::str::from_utf8(tmp_buffer).unwrap());
+                payload_buffer.extend(tmp_buffer);
             }
-            payload_buffer.extend(tmp_buffer);
 
             let split_results = (self._split_fn)(&payload_buffer, start_hint);
             self._bufreader.consume(tmp_buffer_len);

@@ -4,7 +4,7 @@ use ::serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct Response<'a> {
     pub id: u32,
-    pub rpc: &'a str,
+    pub jsonrpc: &'a str,
     pub result: Result,
 }
 
