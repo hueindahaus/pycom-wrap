@@ -18,7 +18,6 @@ where
         }
         Err(e) => Err(e.to_string()),
     }
-    // return format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
 }
 
 pub fn decode_message<'a, T: serde::de::Deserialize<'a>>(msg: &'a [u8]) -> Result<T, String> {
