@@ -1,6 +1,7 @@
 use crate::constants::{self};
 use crate::scanner::SplitFnResult;
 use serde_json;
+use tracing::info;
 
 pub fn encode_message<T>(msg: &T) -> Result<Vec<u8>, String>
 where
@@ -32,6 +33,7 @@ pub fn decode_message<'a, T: serde::de::Deserialize<'a>>(msg: &'a [u8]) -> Resul
         }
         None => return Err("Could not find delimiter when decoding message".to_string()),
     };
+    // info!("{}", std::str::from_utf8(content_bytes).unwrap());
     match serde_json::from_slice(content_bytes) {
         Ok(deserialized) => Ok(deserialized),
         Err(err) => Err(err.to_string()),

@@ -6,26 +6,24 @@ pub enum IncommingMessage<'a> {
     #[serde(rename_all = "camelCase")]
     Request {
         id: u32,
-        method: &'a str,
+        method: String,
         params: Option<Params>,
         jsonrpc: &'a str,
     },
     #[serde(rename_all = "camelCase")]
-    Notification { method: &'a str, jsonrpc: &'a str },
+    Notification { method: String, jsonrpc: &'a str },
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase", untagged)]
 pub enum Params {
     #[serde(rename_all = "camelCase")]
-    InitializeParams { client_info: ClientInfo },
-    #[serde(rename_all = "camelCase")]
-    InitializedParams {},
-    #[serde(rename_all = "camelCase")]
     DocumentFormattingParams {
         text_document: TextDocumentIdentifier,
-        formatting_options: FormattingOptions,
+        options: FormattingOptions,
     },
+    #[serde(rename_all = "camelCase")]
+    InitializeParams { client_info: ClientInfo },
 }
 
 #[derive(Deserialize, Debug)]
@@ -37,11 +35,11 @@ pub struct TextDocumentIdentifier {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FormattingOptions {
-    tabsize: u32,
-    insert_spaces: bool,
-    trim_trailing_whitespace: Option<bool>,
-    insert_final_newline: Option<bool>,
-    trim_final_newlines: Option<bool>,
+    // tab_size: u32,
+    // insert_spaces: bool,
+    // trim_trailing_whitespace: Option<bool>,
+    // insert_final_newline: Option<bool>,
+    // trim_final_newlines: Option<bool>,
 }
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

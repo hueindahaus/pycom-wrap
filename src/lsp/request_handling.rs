@@ -43,39 +43,37 @@ impl RequestHandler {
                 }))
             }
             IncommingMessage::Request {
-                method: "initialize",
+                ref method,
                 params: Some(Params::InitializeParams { client_info, .. }),
                 id,
                 ..
-            } => Ok(RequestHandlerAction::ResponseAction(
+            } if method == "initialize" => Ok(RequestHandlerAction::ResponseAction(
                 self.handle_initialize_request(*id, client_info),
             )),
-            IncommingMessage::Request {
-                method: "shutdown",
-                id,
-                ..
-            } => Ok(RequestHandlerAction::ResponseAction(
-                self.handle_shutdown_request(*id),
-            )),
+            IncommingMessage::Request { ref method, id, .. } if method == "shutdown" => Ok(
+                RequestHandlerAction::ResponseAction(self.handle_shutdown_request(*id)),
+            ),
             IncommingMessage::Request {
                 id,
-                method: "textdocument/formatting",
+                ref method,
                 params:
                     Some(Params::DocumentFormattingParams {
                         text_document,
-                        formatting_options,
+                        options,
                     }),
                 ..
-            } => Ok(RequestHandlerAction::ResponseAction(
-                self.handle_textdocument_formatting_request(*id, text_document, formatting_options),
+            } if method == "textDocument/formatting" => Ok(RequestHandlerAction::ResponseAction(
+                self.handle_textdocument_formatting_request(*id, text_document, options),
             )),
-            IncommingMessage::Notification {
-                method: "initialized",
-                ..
-            } => Ok(RequestHandlerAction::NoopAction),
-            IncommingMessage::Notification { method: "exit", .. } => {
-                return Ok(RequestHandlerAction::ExitAction)
+            IncommingMessage::Notification { ref method, .. } if method == "initialized" => {
+                Ok(RequestHandlerAction::NoopAction)
             }
+            IncommingMessage::Notification { method, .. } if method == "exit" => {
+                Ok(RequestHandlerAction::ExitAction)
+            }
+            IncommingMessage::Notification { .. } => Err(format!(
+                "TODO: add error types to handler so that they can be gracefully handled outside"
+            )),
             message => Err(format!("Unhandled message type {:#?}", message)),
         };
     }
@@ -113,7 +111,7 @@ impl RequestHandler {
         &self,
         id: u32,
         text_document: &TextDocumentIdentifier,
-        formattion_options: &FormattingOptions,
+        optionts: &FormattingOptions,
     ) -> Response {
         info!("Handling formatting request for {}", text_document.uri);
 

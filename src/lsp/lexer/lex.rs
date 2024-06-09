@@ -1,4 +1,4 @@
-use super::string::Token;
+use super::token::Token;
 
 pub type LexResult = Result<Token, LexicalErrorType>;
 
