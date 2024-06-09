@@ -1,3 +1,4 @@
+use crate::lsp::lexer::lex;
 use crate::{
     constants,
     lsp::response::{Response, Result as ResponseResult, ServerCapabilities, ServerInfo},
@@ -28,10 +29,10 @@ impl RequestHandler {
         &'a mut self,
         request: &'a IncommingMessage<'a>,
     ) -> Result<RequestHandlerAction, String> {
-        if let IncommingMessage::Request { .. } = request {
-            if !self.is_active {
-                return Ok(RequestHandlerAction::ResponseAction(Response {
-                    id: None,
+        return match request {
+            IncommingMessage::Request { id, .. } if !self.is_active => {
+                Ok(RequestHandlerAction::ResponseAction(Response {
+                    id: Some(*id),
                     result: None,
                     jsonrpc: constants::JSON_RPC_VERSION,
                     error: Some(ResponseError {
@@ -39,11 +40,8 @@ impl RequestHandler {
                         data: None,
                         message: "Server has been shut down, so new requests are invalid.",
                     }),
-                }));
+                }))
             }
-        }
-
-        return match request {
             IncommingMessage::Request {
                 method: "initialize",
                 params: Some(Params::InitializeParams { client_info, .. }),

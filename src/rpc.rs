@@ -113,9 +113,9 @@ mod test {
 
     #[test]
     fn test_encode_message() {
-        let expected = "Content-Length: 16\r\n\r\n{\"testing\":true}";
+        let expected = b"Content-Length: 16\r\n\r\n{\"testing\":true}";
         let example = EncodingExample { testing: true };
-        let actual = encode_message(&example);
+        let actual = encode_message(&example).unwrap();
         assert_eq!(actual, expected);
     }
 
@@ -123,7 +123,7 @@ mod test {
     fn test_decode_message() {
         let expected = EncodingExample { testing: true };
         let message = b"Content-Length: 16\r\n\r\n{\"testing\":true}";
-        let actual: EncodingExample = decode_message(message);
+        let actual: EncodingExample = decode_message(message).unwrap();
         assert_eq!(actual, expected);
     }
 }
