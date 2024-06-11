@@ -1,4 +1,6 @@
-use std::{collections::HashMap, fmt, iter::Map};
+use std::fmt;
+
+use num_bigint::BigInt;
 
 use super::{mode::Mode, text_size::TextSize};
 
@@ -13,7 +15,7 @@ pub enum Token {
     /// Token value for an integer.
     Int {
         /// The integer value.
-        value: u64,
+        value: i64,
     },
     /// Token value for a floating point number.
     Float {
@@ -142,6 +144,8 @@ pub enum Token {
     Rarrow,
     /// Token value for ellipsis `...`.
     Ellipsis,
+
+    WhiteSpace,
 
     // Self documenting.
     // Keywords (alphabetically):
@@ -314,6 +318,7 @@ impl fmt::Display for Token {
             AtEqual => f.write_str("'@='"),
             Rarrow => f.write_str("'->'"),
             Ellipsis => f.write_str("'...'"),
+            WhiteSpace => f.write_str("' '"),
             False => f.write_str("'False'"),
             None => f.write_str("'None'"),
             True => f.write_str("'True'"),
