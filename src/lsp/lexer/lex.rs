@@ -4,10 +4,8 @@ use super::{
     text_size::TextSize,
     token::{StringKind, Token},
 };
-use num_bigint::BigInt;
 use num_traits::Num;
-use serde_json::error;
-use std::{cmp::Ordering, panic::Location};
+use std::cmp::Ordering;
 use unic_emoji_char::is_emoji_presentation;
 use unic_ucd_ident::{is_xid_continue, is_xid_start};
 
@@ -161,6 +159,8 @@ where
             char_reader.next();
         }
 
+        char_reader.cursor = 0.into();
+
         return char_reader;
     }
 }
@@ -186,7 +186,7 @@ pub struct Lexer<T>
 where
     T: Iterator<Item = char>,
 {
-    char_reader: CharReader<T, 3>,
+    char_reader: CharReader<T, 4>,
     at_begin_of_line: bool,
     nesting: usize,
     indentations: Indentations,
@@ -223,13 +223,7 @@ where
     }
 
     pub fn next_char(&mut self) -> Option<char> {
-        let char = self.char_reader.next();
-
-        return match self.window()[..2] {
-            [Some('\r'), Some('\n')] => self.char_reader.next(),
-            [Some(_), ..] => char,
-            _ => None,
-        };
+        return self.char_reader.next();
     }
 
     pub fn jump_forward_n_chars(&mut self, num: u32) -> TextSize {
@@ -244,7 +238,7 @@ where
         return self.char_reader.cursor;
     }
 
-    pub fn window(&self) -> &[Option<char>; 3] {
+    pub fn window(&self) -> &[Option<char>; 4] {
         return &self.char_reader.window;
     }
 
@@ -313,11 +307,12 @@ where
                         if let Some(next_c) = self.next_char() {
                             string_content.push('\\');
                             string_content.push(next_c);
+                            self.next_char();
                             continue;
                         }
                     }
 
-                    if c == '\n' && !is_triple_quoted {
+                    if (c == '\n' || c == '\r') && !is_triple_quoted {
                         return Err(LexicalError {
                             error: LexicalErrorType::OtherError(
                                 "EOL while scanning string literal".to_owned(),
@@ -336,6 +331,7 @@ where
                         }
                     }
                     string_content.push(c);
+                    self.next_char();
                 }
                 None => {
                     return Err(LexicalError {
@@ -358,127 +354,126 @@ where
         Ok((token, TextRange::new(start_pos, end_pos)))
     }
 
-    pub fn lex_next(&mut self) -> LexResult {
-        return match self.window()[..3] {
-            [Some('0'..='9'), ..] => Ok(self.lex_number()?),
-            [Some('#'), ..] => Ok(self.lex_single_line_comment()?),
-            [Some('"' | '\''), ..] => Ok(self.lex_string(StringKind::String)?),
-            [Some('='), Some('='), ..] => Ok((
+    pub fn lex_next(&mut self) -> Result<Option<TokenSpan>, LexicalError> {
+        let result = match self.window()[..4] {
+            [Some('0'..='9'), ..] => Some(self.lex_number()?),
+            [Some('#'), ..] => Some(self.lex_single_line_comment()?),
+            [Some('"' | '\''), ..] => Some(self.lex_string(StringKind::String)?),
+            [Some('='), Some('='), ..] => Some((
                 Token::EqEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('='), ..] => Ok((
+            [Some('='), ..] => Some((
                 Token::Equal,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-
-            [Some('+'), Some('='), ..] => Ok((
+            [Some('+'), Some('='), ..] => Some((
                 Token::PlusEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('+'), ..] => Ok((
+            [Some('+'), ..] => Some((
                 Token::Plus,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('*'), Some('*'), Some('=')] => Ok((
+            [Some('*'), Some('*'), Some('='), ..] => Some((
                 Token::DoubleStarEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(3)),
             )),
-            [Some('*'), Some('*'), ..] => Ok((
+            [Some('*'), Some('*'), ..] => Some((
                 Token::DoubleStar,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('*'), Some('='), ..] => Ok((
+            [Some('*'), Some('='), ..] => Some((
                 Token::StarEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('*'), ..] => Ok((
+            [Some('*'), ..] => Some((
                 Token::Star,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('/'), Some('/'), Some('=')] => Ok((
+            [Some('/'), Some('/'), Some('='), ..] => Some((
                 Token::DoubleSlashEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(3)),
             )),
-            [Some('/'), Some('/'), ..] => Ok((
+            [Some('/'), Some('/'), ..] => Some((
                 Token::DoubleSlash,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('/'), Some('='), ..] => Ok((
+            [Some('/'), Some('='), ..] => Some((
                 Token::SlashEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('/'), ..] => Ok((
+            [Some('/'), ..] => Some((
                 Token::Slash,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('%'), Some('='), ..] => Ok((
+            [Some('%'), Some('='), ..] => Some((
                 Token::PercentEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('%'), ..] => Ok((
+            [Some('%'), ..] => Some((
                 Token::Percent,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('|'), Some('='), ..] => Ok((
+            [Some('|'), Some('='), ..] => Some((
                 Token::VbarEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('|'), ..] => Ok((
+            [Some('|'), ..] => Some((
                 Token::Vbar,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('^'), Some('='), ..] => Ok((
+            [Some('^'), Some('='), ..] => Some((
                 Token::CircumflexEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('^'), ..] => Ok((
+            [Some('^'), ..] => Some((
                 Token::CircumFlex,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('&'), Some('='), ..] => Ok((
+            [Some('&'), Some('='), ..] => Some((
                 Token::AmperEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('&'), ..] => Ok((
+            [Some('&'), ..] => Some((
                 Token::Amper,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('-'), Some('='), ..] => Ok((
+            [Some('-'), Some('='), ..] => Some((
                 Token::MinusEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('-'), Some('>'), ..] => Ok((
+            [Some('-'), Some('>'), ..] => Some((
                 Token::Rarrow,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('-'), ..] => Ok((
+            [Some('-'), ..] => Some((
                 Token::Minus,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('@'), Some('='), ..] => Ok((
+            [Some('@'), Some('='), ..] => Some((
                 Token::AtEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('@'), ..] => Ok((
+            [Some('@'), ..] => Some((
                 Token::At,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('!'), Some('='), ..] => Ok((
+            [Some('!'), Some('='), ..] => Some((
                 Token::NotEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
             [Some('!'), ..] => Err(LexicalError {
                 error: LexicalErrorType::UnrecognizedToken { tok: '!' },
                 location: self.char_cursor(),
-            }),
-            [Some('~'), ..] => Ok((
+            })?,
+            [Some('~'), ..] => Some((
                 Token::Tilde,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
             [Some('('), ..] => {
                 self.nesting += 1;
-                Ok((
+                Some((
                     Token::Lpar,
                     TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                 ))
@@ -488,17 +483,17 @@ where
                     return Err(LexicalError {
                         error: LexicalErrorType::NestingError,
                         location: self.char_cursor(),
-                    });
+                    })?;
                 }
                 self.nesting -= 1;
-                Ok((
+                Some((
                     Token::Rpar,
                     TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                 ))
             }
             [Some('['), ..] => {
                 self.nesting += 1;
-                Ok((
+                Some((
                     Token::Lsqb,
                     TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                 ))
@@ -508,17 +503,17 @@ where
                     return Err(LexicalError {
                         error: LexicalErrorType::NestingError,
                         location: self.char_cursor(),
-                    });
+                    })?;
                 }
                 self.nesting -= 1;
-                Ok((
+                Some((
                     Token::Rsqb,
                     TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                 ))
             }
             [Some('{'), ..] => {
                 self.nesting += 1;
-                Ok((
+                Some((
                     Token::Lbrace,
                     TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                 ))
@@ -528,102 +523,124 @@ where
                     return Err(LexicalError {
                         error: LexicalErrorType::NestingError,
                         location: self.char_cursor(),
-                    });
+                    })?;
                 }
                 self.nesting -= 1;
-                Ok((
+                Some((
                     Token::Rbrace,
                     TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                 ))
             }
-            [Some(':'), Some('='), ..] => Ok((
+            [Some(':'), Some('='), ..] => Some((
                 Token::ColonEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some(':'), ..] => Ok((
+            [Some(':'), ..] => Some((
                 Token::Colon,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some(';'), ..] => Ok((
+            [Some(';'), ..] => Some((
                 Token::Semi,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('<'), Some('<'), Some('=')] => Ok((
+            [Some('<'), Some('<'), Some('='), ..] => Some((
                 Token::LeftShiftEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(3)),
             )),
-            [Some('<'), Some('<'), ..] => Ok((
+            [Some('<'), Some('<'), ..] => Some((
                 Token::LeftShift,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('<'), Some('='), ..] => Ok((
+            [Some('<'), Some('='), ..] => Some((
                 Token::LessEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('<'), ..] => Ok((
+            [Some('<'), ..] => Some((
                 Token::Less,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
 
-            [Some('>'), Some('>'), Some('=')] => Ok((
+            [Some('>'), Some('>'), Some('='), ..] => Some((
                 Token::RightShiftEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(3)),
             )),
-            [Some('>'), Some('>'), ..] => Ok((
+            [Some('>'), Some('>'), ..] => Some((
                 Token::RightShift,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('>'), Some('='), ..] => Ok((
+            [Some('>'), Some('='), ..] => Some((
                 Token::GreaterEqual,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
             )),
-            [Some('>'), ..] => Ok((
+            [Some('>'), ..] => Some((
                 Token::Greater,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some(','), ..] => Ok((
+            [Some(','), ..] => Some((
                 Token::Comma,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
-            [Some('.'), Some('.'), Some('.')] => Ok((
+            [Some('.'), Some('.'), Some('.'), ..] => Some((
                 Token::Ellipsis,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(3)),
             )),
-            [Some('.'), ..] => Ok((
+            [Some('.'), ..] => Some((
                 Token::Dot,
                 TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
             )),
+            [Some('\r'), Some('\n'), ..] => {
+                if self.nesting == 0 {
+                    self.at_begin_of_line = true;
+                    Some((
+                        Token::Newline,
+                        TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
+                    ))
+                } else {
+                    Some((
+                        Token::NonLogicalNewline,
+                        TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
+                    ))
+                }
+            }
             [Some('\n' | '\r'), ..] => {
                 if self.nesting == 0 {
                     self.at_begin_of_line = true;
-                    Ok((
+                    Some((
                         Token::Newline,
                         TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                     ))
                 } else {
-                    Ok((
+                    Some((
                         Token::NonLogicalNewline,
                         TextRange::new(self.char_cursor(), self.jump_forward_n_chars(1)),
                     ))
                 }
             }
             [Some(' ' | '\t' | '\x0c'), ..] => {
-                let start_pos = self.char_cursor();
                 while let Some(' ' | '\t' | '\x0c') = self.window()[0] {
-                    self.next_char();
+                    self.jump_forward_n_chars(1);
                 }
-                let end_pos = self.char_cursor();
-                Ok((Token::WhiteSpace, TextRange::new(start_pos, end_pos)))
+                None
             }
-            [Some('\\'), Some('\n' | '\r'), ..] => Err(LexicalError {
-                error: LexicalErrorType::LineContinuationError,
-                location: self.char_cursor(),
-            }),
-            [Some('\\'), None, ..] => Err(LexicalError {
+            [Some('\\'), Some('\n' | '\r'), None, ..]
+            | [Some('\\'), Some('\r'), Some('\n'), None] => Err(LexicalError {
                 error: LexicalErrorType::Eof,
                 location: self.char_cursor(),
-            }),
-            [Some(c), ..] if is_emoji_presentation(c) => Ok((
+            })?,
+            [Some('\\'), Some('\r'), Some('\n'), Some(_)] => {
+                self.jump_forward_n_chars(3);
+                None
+            }
+            [Some('\\'), Some('\n' | '\r'), Some(_), ..] => {
+                // Don't include the newline in this case
+                self.jump_forward_n_chars(2);
+                None
+            }
+            [Some('\\'), Some(_), ..] => Err(LexicalError {
+                error: LexicalErrorType::LineContinuationError,
+                location: self.char_cursor(),
+            })?,
+            [Some(c), ..] if is_emoji_presentation(c) => Some((
                 Token::Name {
                     name: c.to_string(),
                 },
@@ -632,16 +649,20 @@ where
             [Some(c), ..] => Err(LexicalError {
                 error: LexicalErrorType::UnrecognizedToken { tok: c },
                 location: self.char_cursor(),
-            }),
+            })?,
             _ => unreachable!("Unexpected character flow"),
         };
+
+        return Ok(result);
     }
 
     pub fn lex_single_line_comment(&mut self) -> LexResult {
-        assert!(self.window()[0].unwrap() == '#');
+        let comment_leader = self.current_char().unwrap();
+        assert!(comment_leader == '#');
         let start_pos = self.char_cursor();
-        self.jump_forward_n_chars(1);
         let mut value = String::new();
+        value.push(comment_leader);
+        self.jump_forward_n_chars(1);
         loop {
             match self.window()[0] {
                 Some('\n' | '\r') | None => {
@@ -889,11 +910,8 @@ where
                 Ok(())
             }
             Some(_c) => {
-                let token = self.lex_next()?;
-
-                // Just ignore whitespace
-                if token.0 != Token::WhiteSpace {
-                    self.queue.push(token);
+                if let Some(token) = self.lex_next()? {
+                    self.queue.push(token)
                 }
 
                 Ok(())
@@ -932,12 +950,12 @@ where
         let mut new_indentation_level = IndentationLevel::default();
 
         loop {
-            match self.window()[0] {
-                Some(' ') => {
+            match self.window()[..2] {
+                [Some(' '), ..] => {
                     self.next_char();
                     new_indentation_level.spaces += 1;
                 }
-                Some('\t') => {
+                [Some('\t'), ..] => {
                     if new_indentation_level.spaces != 0 {
                         return Err(LexicalError {
                             error: LexicalErrorType::TabsAfterSpaces,
@@ -947,15 +965,24 @@ where
                     self.next_char();
                     new_indentation_level.tabs += 1;
                 }
-                Some('#') => {
-                    self.lex_single_line_comment();
+                [Some('#'), ..] => {
+                    let comment_token = self.lex_single_line_comment()?;
+                    self.queue.push(comment_token);
                     new_indentation_level.reset();
                 }
-                Some('\x0c') => {
+                [Some('\x0c'), ..] => {
                     self.next_char();
                     new_indentation_level.reset();
                 }
-                Some('\n' | '\r') => {
+                [Some('\r'), Some('\n')] => {
+                    new_indentation_level.reset();
+                    let spanned = (
+                        Token::NonLogicalNewline,
+                        TextRange::new(self.char_cursor(), self.jump_forward_n_chars(2)),
+                    );
+                    self.queue.push(spanned)
+                }
+                [Some('\n' | '\r'), ..] => {
                     new_indentation_level.reset();
                     let spanned = (
                         Token::NonLogicalNewline,
@@ -963,7 +990,7 @@ where
                     );
                     self.queue.push(spanned)
                 }
-                None => {
+                [None, ..] => {
                     new_indentation_level.reset();
                     break;
                 }
@@ -1112,9 +1139,6 @@ mod tests {
     fn test_numbers() {
         let source = "0x2f 0o12 0b1101 0 123 123_45_67_890 0.2 1e+2 2.1e3 2j 2.2j";
         let tokens = lex_source(source);
-        for token in tokens.iter() {
-            println!("{}", token.to_string());
-        }
         assert_eq!(
             tokens,
             vec![
@@ -1192,366 +1216,369 @@ mod tests {
         test_comment_until_unix_eol: UNIX_EOL,
     }
 
-    // #[test]
-    // fn test_assignment() {
-    //     let source = r"a_variable = 99 + 2-0";
-    //     let tokens = lex_source(source);
-    //
-    //     assert_eq!(
-    //         tokens,
-    //         vec![
-    //             Token::Name {
-    //                 name: String::from("a_variable"),
-    //             },
-    //             Token::Equal,
-    //             Token::Int { value: 99 },
-    //             Token::Plus,
-    //             Token::Int { value: 2 },
-    //             Token::Minus,
-    //             Token::Int { value: 0 },
-    //             Token::Newline,
-    //         ]
-    //     );
-    // }
+    #[test]
+    fn test_assignment() {
+        let source = r"a_variable = 99 + 2-0";
+        let tokens = lex_source(source);
 
-    //     macro_rules! test_indentation_with_eol {
-    //         ($($name:ident: $eol:expr,)*) => {
-    //             $(
-    //             #[test]
-    //             #[cfg(feature = "full-lexer")]
-    //             fn $name() {
-    //                 let source = format!("def foo():{}   return 99{}{}", $eol, $eol, $eol);
-    //                 let tokens = lex_source(&source);
-    //                 assert_eq!(
-    //                     tokens,
-    //                     vec![
-    //                         Token::Def,
-    //                         Token::Name {
-    //                             name: String::from("foo"),
-    //                         },
-    //                         Token::Lpar,
-    //                         Token::Rpar,
-    //                         Token::Colon,
-    //                         Token::Newline,
-    //                         Token::Indent,
-    //                         Token::Return,
-    //                         Token::Int { value: 99 },
-    //                         Token::Newline,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Dedent,
-    //                     ]
-    //                 );
-    //             }
-    //             )*
-    //         };
-    //     }
-    //
-    //     test_indentation_with_eol! {
-    //         test_indentation_windows_eol: WINDOWS_EOL,
-    //         test_indentation_mac_eol: MAC_EOL,
-    //         test_indentation_unix_eol: UNIX_EOL,
-    //     }
-    //
-    //     macro_rules! test_double_dedent_with_eol {
-    //         ($($name:ident: $eol:expr,)*) => {
-    //         $(
-    //             #[test]
-    //             #[cfg(feature = "full-lexer")]
-    //             fn $name() {
-    //                 let source = format!("def foo():{} if x:{}{}  return 99{}{}", $eol, $eol, $eol, $eol, $eol);
-    //                 let tokens = lex_source(&source);
-    //                 assert_eq!(
-    //                     tokens,
-    //                     vec![
-    //                         Token::Def,
-    //                         Token::Name {
-    //                             name: String::from("foo"),
-    //                         },
-    //                         Token::Lpar,
-    //                         Token::Rpar,
-    //                         Token::Colon,
-    //                         Token::Newline,
-    //                         Token::Indent,
-    //                         Token::If,
-    //                         Token::Name {
-    //                             name: String::from("x"),
-    //                         },
-    //                         Token::Colon,
-    //                         Token::Newline,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Indent,
-    //                         Token::Return,
-    //                         Token::Int { value: 99 },
-    //                         Token::Newline,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Dedent,
-    //                         Token::Dedent,
-    //                     ]
-    //                 );
-    //             }
-    //         )*
-    //         }
-    //     }
-    //
-    //     macro_rules! test_double_dedent_with_tabs {
-    //         ($($name:ident: $eol:expr,)*) => {
-    //         $(
-    //             #[test]
-    //             #[cfg(feature = "full-lexer")]
-    //             fn $name() {
-    //                 let source = format!("def foo():{}\tif x:{}{}\t return 99{}{}", $eol, $eol, $eol, $eol, $eol);
-    //                 let tokens = lex_source(&source);
-    //                 assert_eq!(
-    //                     tokens,
-    //                     vec![
-    //                         Token::Def,
-    //                         Token::Name {
-    //                             name: String::from("foo"),
-    //                         },
-    //                         Token::Lpar,
-    //                         Token::Rpar,
-    //                         Token::Colon,
-    //                         Token::Newline,
-    //                         Token::Indent,
-    //                         Token::If,
-    //                         Token::Name {
-    //                             name: String::from("x"),
-    //                         },
-    //                         Token::Colon,
-    //                         Token::Newline,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Indent,
-    //                         Token::Return,
-    //                         Token::Int { value: 99 },
-    //                         Token::Newline,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Dedent,
-    //                         Token::Dedent,
-    //                     ]
-    //                 );
-    //             }
-    //         )*
-    //         }
-    //     }
-    //
-    //     test_double_dedent_with_eol! {
-    //         test_double_dedent_windows_eol: WINDOWS_EOL,
-    //         test_double_dedent_mac_eol: MAC_EOL,
-    //         test_double_dedent_unix_eol: UNIX_EOL,
-    //     }
-    //
-    //     test_double_dedent_with_tabs! {
-    //         test_double_dedent_tabs_windows_eol: WINDOWS_EOL,
-    //         test_double_dedent_tabs_mac_eol: MAC_EOL,
-    //         test_double_dedent_tabs_unix_eol: UNIX_EOL,
-    //     }
-    //
-    //     macro_rules! test_newline_in_brackets {
-    //         ($($name:ident: $eol:expr,)*) => {
-    //         $(
-    //             #[test]
-    //             #[cfg(feature = "full-lexer")]
-    //             fn $name() {
-    //                 let source = r"x = [
-    //
-    //     1,2
-    // ,(3,
-    // 4,
-    // ), {
-    // 5,
-    // 6,\
-    // 7}]
-    // ".replace("\n", $eol);
-    //                 let tokens = lex_source(&source);
-    //                 assert_eq!(
-    //                     tokens,
-    //                     vec![
-    //                         Token::Name {
-    //                             name: String::from("x"),
-    //                         },
-    //                         Token::Equal,
-    //                         Token::Lsqb,
-    //                         Token::NonLogicalNewline,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Int { value: 1 },
-    //                         Token::Comma,
-    //                         Token::Int { value: 2 },
-    //                         Token::NonLogicalNewline,
-    //                         Token::Comma,
-    //                         Token::Lpar,
-    //                         Token::Int { value: 3 },
-    //                         Token::Comma,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Int { value: 4 },
-    //                         Token::Comma,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Rpar,
-    //                         Token::Comma,
-    //                         Token::Lbrace,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Int { value: 5 },
-    //                         Token::Comma,
-    //                         Token::NonLogicalNewline,
-    //                         Token::Int { value: 6 },
-    //                         Token::Comma,
-    //                         // Continuation here - no NonLogicalNewline.
-    //                         Token::Int { value: 7 },
-    //                         Token::Rbrace,
-    //                         Token::Rsqb,
-    //                         Token::Newline,
-    //                     ]
-    //                 );
-    //             }
-    //         )*
-    //         };
-    //     }
-    //
-    //     test_newline_in_brackets! {
-    //         test_newline_in_brackets_windows_eol: WINDOWS_EOL,
-    //         test_newline_in_brackets_mac_eol: MAC_EOL,
-    //         test_newline_in_brackets_unix_eol: UNIX_EOL,
-    //     }
-    //
-    //     #[test]
-    //     fn test_non_logical_newline_in_string_continuation() {
-    //         let source = r"(
-    //     'a'
-    //     'b'
-    //
-    //     'c' \
-    //     'd'
-    // )";
-    //         let tokens = lex_source(source);
-    //         assert_eq!(
-    //             tokens,
-    //             vec![
-    //                 Token::Lpar,
-    //                 Token::NonLogicalNewline,
-    //                 str_tok("a"),
-    //                 Token::NonLogicalNewline,
-    //                 str_tok("b"),
-    //                 Token::NonLogicalNewline,
-    //                 Token::NonLogicalNewline,
-    //                 str_tok("c"),
-    //                 str_tok("d"),
-    //                 Token::NonLogicalNewline,
-    //                 Token::Rpar,
-    //                 Token::Newline,
-    //             ]
-    //         );
-    //     }
-    //
-    //     #[test]
-    //     fn test_logical_newline_line_comment() {
-    //         let source = "#Hello\n#World\n";
-    //         let tokens = lex_source(source);
-    //         assert_eq!(
-    //             tokens,
-    //             vec![
-    //                 Token::Comment("#Hello".to_owned()),
-    //                 Token::NonLogicalNewline,
-    //                 Token::Comment("#World".to_owned()),
-    //                 Token::NonLogicalNewline,
-    //             ]
-    //         );
-    //     }
-    //
-    //     #[test]
-    //     fn test_operators() {
-    //         let source = "//////=/ /";
-    //         let tokens = lex_source(source);
-    //         assert_eq!(
-    //             tokens,
-    //             vec![
-    //                 Token::DoubleSlash,
-    //                 Token::DoubleSlash,
-    //                 Token::DoubleSlashEqual,
-    //                 Token::Slash,
-    //                 Token::Slash,
-    //                 Token::Newline,
-    //             ]
-    //         );
-    //     }
-    //
-    //     #[test]
-    //     fn test_string() {
-    //         let source = r#""double" 'single' 'can\'t' "\\\"" '\t\r\n' '\g' r'raw\'' '\420' '\200\0a'"#;
-    //         let tokens = lex_source(source);
-    //         assert_eq!(
-    //             tokens,
-    //             vec![
-    //                 str_tok("double"),
-    //                 str_tok("single"),
-    //                 str_tok(r"can\'t"),
-    //                 str_tok(r#"\\\""#),
-    //                 str_tok(r"\t\r\n"),
-    //                 str_tok(r"\g"),
-    //                 raw_str_tok(r"raw\'"),
-    //                 str_tok(r"\420"),
-    //                 str_tok(r"\200\0a"),
-    //                 Token::Newline,
-    //             ]
-    //         );
-    //     }
-    //
-    //     macro_rules! test_string_continuation {
-    //         ($($name:ident: $eol:expr,)*) => {
-    //         $(
-    //             #[test]
-    //             fn $name() {
-    //                 let source = format!("\"abc\\{}def\"", $eol);
-    //                 let tokens = lex_source(&source);
-    //                 assert_eq!(
-    //                     tokens,
-    //                     vec![
-    //                         str_tok("abc\\\ndef"),
-    //                         Token::Newline,
-    //                     ]
-    //                 )
-    //             }
-    //         )*
-    //         }
-    //     }
-    //
-    //     test_string_continuation! {
-    //         test_string_continuation_windows_eol: WINDOWS_EOL,
-    //         test_string_continuation_mac_eol: MAC_EOL,
-    //         test_string_continuation_unix_eol: UNIX_EOL,
-    //     }
-    //
-    //     #[test]
-    //     fn test_escape_unicode_name() {
-    //         let source = r#""\N{EN SPACE}""#;
-    //         let tokens = lex_source(source);
-    //         assert_eq!(tokens, vec![str_tok(r"\N{EN SPACE}"), Token::Newline])
-    //     }
-    //
-    //     macro_rules! test_triple_quoted {
-    //         ($($name:ident: $eol:expr,)*) => {
-    //         $(
-    //             #[test]
-    //             fn $name() {
-    //                 let source = format!("\"\"\"{0} test string{0} \"\"\"", $eol);
-    //                 let tokens = lex_source(&source);
-    //                 assert_eq!(
-    //                     tokens,
-    //                     vec![
-    //                         Token::String {
-    //                             value: "\n test string\n ".to_owned(),
-    //                             kind: StringKind::String,
-    //                             triple_quoted: true,
-    //                         },
-    //                         Token::Newline,
-    //                     ]
-    //                 )
-    //             }
-    //         )*
-    //         }
-    //     }
-    //
-    //     test_triple_quoted! {
-    //         test_triple_quoted_windows_eol: WINDOWS_EOL,
-    //         test_triple_quoted_mac_eol: MAC_EOL,
-    //         test_triple_quoted_unix_eol: UNIX_EOL,
-    //     }
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Name {
+                    name: String::from("a_variable"),
+                },
+                Token::Equal,
+                Token::Int { value: 99 },
+                Token::Plus,
+                Token::Int { value: 2 },
+                Token::Minus,
+                Token::Int { value: 0 },
+                Token::Newline,
+            ]
+        );
+    }
+
+    macro_rules! test_indentation_with_eol {
+            ($($name:ident: $eol:expr,)*) => {
+                $(
+                #[test]
+                #[cfg(feature = "full-lexer")]
+                fn $name() {
+                    let source = format!("def foo():{}   return 99{}{}", $eol, $eol, $eol);
+                    let tokens = lex_source(&source);
+                    assert_eq!(
+                        tokens,
+                        vec![
+                            Token::Def,
+                            Token::Name {
+                                name: String::from("foo"),
+                            },
+                            Token::Lpar,
+                            Token::Rpar,
+                            Token::Colon,
+                            Token::Newline,
+                            Token::Indent,
+                            Token::Return,
+                            Token::Int { value: 99 },
+                            Token::Newline,
+                            Token::NonLogicalNewline,
+                            Token::Dedent,
+                        ]
+                    );
+                }
+                )*
+            };
+        }
+
+    test_indentation_with_eol! {
+        test_indentation_windows_eol: WINDOWS_EOL,
+        test_indentation_mac_eol: MAC_EOL,
+        test_indentation_unix_eol: UNIX_EOL,
+    }
+
+    macro_rules! test_double_dedent_with_eol {
+            ($($name:ident: $eol:expr,)*) => {
+            $(
+                #[test]
+                #[cfg(feature = "full-lexer")]
+                fn $name() {
+                    let source = format!("def foo():{} if x:{}{}  return 99{}{}", $eol, $eol, $eol, $eol, $eol);
+                    let tokens = lex_source(&source);
+                    assert_eq!(
+                        tokens,
+                        vec![
+                            Token::Def,
+                            Token::Name {
+                                name: String::from("foo"),
+                            },
+                            Token::Lpar,
+                            Token::Rpar,
+                            Token::Colon,
+                            Token::Newline,
+                            Token::Indent,
+                            Token::If,
+                            Token::Name {
+                                name: String::from("x"),
+                            },
+                            Token::Colon,
+                            Token::Newline,
+                            Token::NonLogicalNewline,
+                            Token::Indent,
+                            Token::Return,
+                            Token::Int { value: 99 },
+                            Token::Newline,
+                            Token::NonLogicalNewline,
+                            Token::Dedent,
+                            Token::Dedent,
+                        ]
+                    );
+                }
+            )*
+            }
+        }
+
+    macro_rules! test_double_dedent_with_tabs {
+            ($($name:ident: $eol:expr,)*) => {
+            $(
+                #[test]
+                #[cfg(feature = "full-lexer")]
+                fn $name() {
+                    let source = format!("def foo():{}\tif x:{}{}\t return 99{}{}", $eol, $eol, $eol, $eol, $eol);
+                    let tokens = lex_source(&source);
+                    assert_eq!(
+                        tokens,
+                        vec![
+                            Token::Def,
+                            Token::Name {
+                                name: String::from("foo"),
+                            },
+                            Token::Lpar,
+                            Token::Rpar,
+                            Token::Colon,
+                            Token::Newline,
+                            Token::Indent,
+                            Token::If,
+                            Token::Name {
+                                name: String::from("x"),
+                            },
+                            Token::Colon,
+                            Token::Newline,
+                            Token::NonLogicalNewline,
+                            Token::Indent,
+                            Token::Return,
+                            Token::Int { value: 99 },
+                            Token::Newline,
+                            Token::NonLogicalNewline,
+                            Token::Dedent,
+                            Token::Dedent,
+                        ]
+                    );
+                }
+            )*
+            }
+        }
+
+    test_double_dedent_with_eol! {
+        test_double_dedent_windows_eol: WINDOWS_EOL,
+        test_double_dedent_mac_eol: MAC_EOL,
+        test_double_dedent_unix_eol: UNIX_EOL,
+    }
+
+    test_double_dedent_with_tabs! {
+        test_double_dedent_tabs_windows_eol: WINDOWS_EOL,
+        test_double_dedent_tabs_mac_eol: MAC_EOL,
+        test_double_dedent_tabs_unix_eol: UNIX_EOL,
+    }
+
+    macro_rules! test_newline_in_brackets {
+            ($($name:ident: $eol:expr,)*) => {
+            $(
+                #[test]
+                #[cfg(feature = "full-lexer")]
+                fn $name() {
+                    let source = r"x = [
+
+        1,2
+    ,(3,
+    4,
+    ), {
+    5,
+    6,\
+    7}]
+    ".replace("\n", $eol);
+                    let tokens = lex_source(&source);
+                    assert_eq!(
+                        tokens,
+                        vec![
+                            Token::Name {
+                                name: String::from("x"),
+                            },
+                            Token::Equal,
+                            Token::Lsqb,
+                            Token::NonLogicalNewline,
+                            Token::NonLogicalNewline,
+                            Token::Int { value: 1 },
+                            Token::Comma,
+                            Token::Int { value: 2 },
+                            Token::NonLogicalNewline,
+                            Token::Comma,
+                            Token::Lpar,
+                            Token::Int { value: 3 },
+                            Token::Comma,
+                            Token::NonLogicalNewline,
+                            Token::Int { value: 4 },
+                            Token::Comma,
+                            Token::NonLogicalNewline,
+                            Token::Rpar,
+                            Token::Comma,
+                            Token::Lbrace,
+                            Token::NonLogicalNewline,
+                            Token::Int { value: 5 },
+                            Token::Comma,
+                            Token::NonLogicalNewline,
+                            Token::Int { value: 6 },
+                            Token::Comma,
+                            // Continuation here - no NonLogicalNewline.
+                            Token::Int { value: 7 },
+                            Token::Rbrace,
+                            Token::Rsqb,
+                            Token::Newline,
+                        ]
+                    );
+                }
+            )*
+            };
+        }
+
+    test_newline_in_brackets! {
+        test_newline_in_brackets_windows_eol: WINDOWS_EOL,
+        test_newline_in_brackets_mac_eol: MAC_EOL,
+        test_newline_in_brackets_unix_eol: UNIX_EOL,
+    }
+
+    #[test]
+    fn test_non_logical_newline_in_string_continuation() {
+        let source = r"(
+            'a'
+            'b'
+
+            'c' \
+            'd'
+        )";
+        let tokens = lex_source(source);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Lpar,
+                Token::NonLogicalNewline,
+                str_tok("a"),
+                Token::NonLogicalNewline,
+                str_tok("b"),
+                Token::NonLogicalNewline,
+                Token::NonLogicalNewline,
+                str_tok("c"),
+                str_tok("d"),
+                Token::NonLogicalNewline,
+                Token::Rpar,
+                Token::Newline,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_logical_newline_line_comment() {
+        let source = "#Hello\n#World\n";
+        let tokens = lex_source(source);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Comment("#Hello".to_owned()),
+                Token::NonLogicalNewline,
+                Token::Comment("#World".to_owned()),
+                Token::NonLogicalNewline,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_operators() {
+        let source = "//////=/ /";
+        let tokens = lex_source(source);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::DoubleSlash,
+                Token::DoubleSlash,
+                Token::DoubleSlashEqual,
+                Token::Slash,
+                Token::Slash,
+                Token::Newline,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_string() {
+        let source = r#""double" 'single' 'can\'t' "\\\"" '\t\r\n' '\g' r'raw\'' '\420' '\200\0a'"#;
+        let tokens = lex_source(source);
+        assert_eq!(
+            tokens,
+            vec![
+                str_tok("double"),
+                str_tok("single"),
+                str_tok(r"can\'t"),
+                str_tok(r#"\\\""#),
+                str_tok(r"\t\r\n"),
+                str_tok(r"\g"),
+                raw_str_tok(r"raw\'"),
+                str_tok(r"\420"),
+                str_tok(r"\200\0a"),
+                Token::Newline,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_string_continuation_windows_eol() {
+        let source = format!("\"abc\\r\\ndef\"");
+        let tokens = lex_source(&source);
+        assert_eq!(
+            tokens,
+            vec![str_tok(&format!("abc\\r\\ndef")), Token::Newline,]
+        )
+    }
+    #[test]
+    fn test_string_continuation_mac_eol() {
+        let source = format!("\"abc\\ndef\"");
+        let tokens = lex_source(&source);
+        assert_eq!(
+            tokens,
+            vec![str_tok(&format!("abc\\ndef")), Token::Newline,]
+        )
+    }
+    #[test]
+    fn test_string_continuation_unix_eol() {
+        let source = format!("\"abc\\n\\ndef\"");
+        let tokens = lex_source(&source);
+        assert_eq!(
+            tokens,
+            vec![str_tok(&format!("abc\\n\\ndef")), Token::Newline,]
+        )
+    }
+
+    #[test]
+    fn test_escape_unicode_name() {
+        let source = r#""\N{EN SPACE}""#;
+        let tokens = lex_source(source);
+        assert_eq!(tokens, vec![str_tok(r"\N{EN SPACE}"), Token::Newline])
+    }
+
+    macro_rules! test_triple_quoted {
+            ($($name:ident: $eol:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let source = format!("\"\"\"{0} test string{0} \"\"\"", $eol);
+                    let tokens = lex_source(&source);
+                    assert_eq!(
+                        tokens,
+                        vec![
+                            Token::String {
+                                value: format!("{0} test string{0} ", $eol),
+                                kind: StringKind::String,
+                                triple_quoted: true,
+                            },
+                            Token::Newline,
+                        ]
+                    )
+                }
+            )*
+            }
+        }
+
+    test_triple_quoted! {
+        test_triple_quoted_windows_eol: WINDOWS_EOL,
+        test_triple_quoted_mac_eol: MAC_EOL,
+        test_triple_quoted_unix_eol: UNIX_EOL,
+    }
 }

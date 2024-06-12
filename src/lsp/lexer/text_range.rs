@@ -7,8 +7,8 @@ use std::{
 
 #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TextRange {
-    start: TextSize,
-    end: TextSize,
+    pub start: TextSize,
+    pub end: TextSize,
 }
 
 // Associative functions

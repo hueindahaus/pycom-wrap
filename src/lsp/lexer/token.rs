@@ -1,8 +1,6 @@
 use std::fmt;
 
-use num_bigint::BigInt;
-
-use super::{mode::Mode, text_size::TextSize};
+use super::text_size::TextSize;
 
 /// The set of tokens the Python source code can be tokenized in.
 #[derive(Clone, Debug, PartialEq)]
@@ -145,8 +143,6 @@ pub enum Token {
     /// Token value for ellipsis `...`.
     Ellipsis,
 
-    WhiteSpace,
-
     // Self documenting.
     // Keywords (alphabetically):
     False,
@@ -197,14 +193,6 @@ pub enum Token {
 }
 
 impl Token {
-    pub fn start_marker(mode: Mode) -> Self {
-        match mode {
-            Mode::Module => Token::StartModule,
-            Mode::Interactive => Token::StartInteractive,
-            Mode::Expression => Token::StartExpression,
-        }
-    }
-
     pub fn try_get_keyword(string: &str) -> Option<Self> {
         match string {
             "and" => Some(Token::And),
@@ -318,7 +306,6 @@ impl fmt::Display for Token {
             AtEqual => f.write_str("'@='"),
             Rarrow => f.write_str("'->'"),
             Ellipsis => f.write_str("'...'"),
-            WhiteSpace => f.write_str("' '"),
             False => f.write_str("'False'"),
             None => f.write_str("'None'"),
             True => f.write_str("'True'"),
