@@ -11,7 +11,7 @@ use lsp::{
 };
 use tracing::{error, event, info, Level};
 use tracing_subscriber::{self, layer::SubscriberExt};
-const LOG_FILE_PATH: &str = "./log.txt";
+const LOG_FILE_PATH: &str = "~/workspaces/pycom_wrap/log.txt";
 fn main() {
     // let _ = std::fs::remove_file(LOG_FILE_PATH);
 
